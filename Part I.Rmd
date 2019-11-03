@@ -1,0 +1,321 @@
+---
+title: "Capstone Project - Part I"
+author: "Inês L Breda"
+date: "9/1/2019"
+output: 
+  html_document: 
+    keep_md: yes
+    number_sections: yes
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(warning = FALSE, cache = TRUE, message = FALSE)
+```
+
+# Summary:
+*The Part I of the Data Science Project sets the stage for the creation of a prediction model that takes a word given by an user and predicts the most probable following word. The 'Library' section of this page lists all the libraries required for the operations in R. Then, the data is retrived and cleaned in the 'Get Data' and 'Clean Data' sections, respectively. Finally a couple of plots are included in the 'Exploratory data analysis' section to give a base to the model that will be developed in Part II of this project.*
+
+
+# LIBRARY
+```{r}
+if(!require(tm)) {
+  install.packages("tm")
+  library (tm)
+}
+if(!require(RWeka)) {
+  install.packages("RWeka")
+  library (RWeka)
+}
+if(!require(qdap)) {
+  install.packages("qdap")
+  library (qdap)
+}
+if(!require(wordcloud)) {
+  install.packages("wordcloud")
+  library (wordcloud)
+}
+if(!require(RColorBrewer)) {
+  install.packages("RColorBrewer")
+  library (RColorBrewer)
+}
+
+if(!require(ggplot2)) {
+  install.packages("ggplot2")
+  library (ggplot2)
+}
+if(!require(ggthemes)) {
+  install.packages("ggthemes")
+  library (ggthemes)
+}
+if(!require(lemon)) {
+  install.packages("lemon")
+  library (lemon)
+}
+knit_print.data.frame <- lemon_print
+```
+
+# GET DATA
+
+The data was downloaded from '"http://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"' and placed in the working directory under a file named 'data'. The file contains 3 data sets (from twitter, blogs and news) in 4 different languages (English, German, Finnish and Russian). For the purpose of this project, only the data in English was used. 
+
+Basic summaries of the three files: 
+```{r}
+if(!file.exists("./data")){dir.create("data")}
+if(!file.exists("./data/Coursera-SwiftKey")){
+  dataURL = "http://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+  download.file(dataURL, destfile = "./data/Coursera-SwiftKey.zip")
+  unzip("./data/Coursera-SwiftKey.zip", exdir = "./data")
+}
+
+con1 <- file(".\\data\\Coursera-SwiftKey\\final\\en_US\\en_US.twitter.txt", "r") 
+twitter <- readLines(con1, encoding = "UTF-8", skipNul=TRUE)
+con2 <- file(".\\data\\Coursera-SwiftKey\\final\\en_US\\en_US.blogs.txt", "r") 
+blogs <- readLines(con2, encoding = "UTF-8", skipNul=TRUE)
+con3 <- file(".\\data\\Coursera-SwiftKey\\final\\en_US\\en_US.news.txt", "r") 
+news <- readLines(con3, encoding = "UTF-8", skipNul=TRUE)
+close(con1); close(con2); close(con3)
+
+overview <- data.frame("File" = c("Twitter", "Blogs", "News"),
+                     "File Size" = sapply(list(twitter, blogs, news),
+                                          function(x){format(object.size(x), 
+                                                             units = "MB")}),
+                     "Line Counts" = sapply(list(twitter, blogs, news),
+                                            function(x){length(x)}),
+                     "Word Counts" = sapply(list(twitter, blogs, news),
+                                            function(x){sum(nchar(x))}),
+                     "Max Words" = sapply(list(twitter, blogs, news),
+                                          function(x){max(unlist(
+                                            lapply(x,function(y) nchar(y))))})
+                     )
+print(overview)
+```
+
+The size of the data challenges the memory required for text mining. A percentage of data was retrieved and stored as a corpus using the VCorpus function.  The corpus was stored in a .RData file for further analysis. All variables were then removed from R to keep a clean session. 
+
+The first 5 lines of the corpus are showed to help understand the content of text.
+
+```{r}
+set.seed(1234); p = 0.5
+
+dataSAMPLE <- c(sample(twitter, p*length(twitter)) , 
+          sample(blogs, p*length(blogs)), 
+          sample(news, p*length(news))
+          )
+rm(con1); rm(con2); rm(con3); rm(twitter); rm(blogs); rm(news)
+
+ENData <- VCorpus(VectorSource(dataSAMPLE), 
+                  readerControl = list (reader = readPlain, language="en")
+                  )
+
+for (i in 1:5) {
+  cat(paste("[[", i, "]] ", sep = ""))
+  writeLines(as.character(ENData[[i]]))
+}
+
+saveRDS(ENData, file = ".\\data\\BaseData.RData")
+rm(dataSAMPLE); rm(ENData)
+```
+
+# CLEAN DATA
+
+The data was cleaned as follows:
+
+ * all letters to lower cap
+ * remove online junk (e.g., emails, hashtags, websites)
+ * remove numbers (e.g., 1987, 20)
+ * remove punctuation (e.g., !,?, ;, ...)
+ * remove simbols (e.g., &, %, <)
+ * add space after short forms ('ll, 've, 're)
+ * remove unnecessary white spaces
+  
+An example of cleaned data is showed. The cleaned corpus was stored in a .RData file for further analysis. All  variables were then removed from R to keep a clean session. 
+
+```{r}
+remove_online_junk<- function(x){
+    # replace emails and such but space
+    x <- gsub("[^ ]{1,}@[^ ]{1,}"," ",x)
+    x <- gsub(" @[^ ]{1,}"," ",x)
+    # hashtags
+    x <- gsub("#[^ ]{1,}"," ",x) 
+    # websites and file systems
+    x <- gsub("[^ ]{1,}://[^ ]{1,}"," ",x) 
+    x
+}
+
+remove_symbols <- function(x){
+    # Edit out most non-alphabetical character
+    # text must be lower case first
+    x <- gsub("[`’‘]","'",x)
+    x <- gsub("[^a-z']"," ",x)
+    x <- gsub("'{2,}"," '",x)
+    x <- gsub("' "," ",x)
+    x <- gsub(" '"," ",x)
+    x <- gsub("^'","",x)
+    x <- gsub("'$","",x)
+    x
+}
+
+short_forms <- data.frame(
+    "sub"=c("'d[^a-z]","'s[^a-z]", "'ll[^a-z]","'re[^a-z]","'ve[^a-z]"),
+    "rep"=c(" 'd "," 's ", " 'll "," 're "," 've ")
+    )
+
+split_shortforms <- function(x){
+    # add a space in front of short forms
+    for(wasf in seq(1,nrow(short_forms))){
+        x <- gsub(short_forms[wasf,"sub"],short_forms[wasf,"rep"],x)}
+    x
+}
+
+short_forms_long <- function(x){
+  x <- gsub( " 'd ","had" ,x)
+  x <- gsub( " 's ","is" ,x)
+  x <- gsub( " 'll ","will" ,x)
+  x <- gsub( " 're","are" ,x)
+  x <- gsub( " 've ","have" ,x)
+}
+    
+BaseData <- readRDS(".\\data\\BaseData.RData")
+BaseData2 <- tm_map(BaseData,content_transformer(tolower))
+BaseData2 <- tm_map(BaseData2,content_transformer(remove_online_junk))
+BaseData2 <- tm_map(BaseData2, removeNumbers)
+BaseData2 <- tm_map(BaseData2, removePunctuation)
+BaseData2 <- tm_map(BaseData2,content_transformer(remove_symbols))
+BaseData2 <- tm_map(BaseData2,content_transformer(split_shortforms))
+BaseData2 <- tm_map(BaseData2,content_transformer(short_forms_long))
+BaseData2 <- tm_map(BaseData2,stripWhitespace)
+BaseData2 <- tm_map(BaseData2, PlainTextDocument)
+
+for (i in 100000:100002) {
+  cat(paste("[[", i, "]] ", sep = ""))
+  writeLines(as.character(BaseData2[[i]]))
+  }
+
+saveRDS(BaseData2, file = ".\\data\\corpus.RData")
+rm(BaseData); rm(BaseData2)
+rm(remove_online_junk); rm(remove_symbols); rm(short_forms); rm(split_shortforms); rm(short_forms_long)
+```
+
+# EXPLORATORY DATA ANALYSIS
+
+## Word Cloud
+
+```{r}
+corpus <- readRDS(".\\data\\corpus.RData")
+wordcloud(corpus, 
+          max.words=100, 
+          random.order=T, 
+          rot.per = .15,
+          colors=brewer.pal(8, 'Accent'))
+```
+
+## nGrams
+
+nGrams determine the frequency of a set of words (2 or more words in sequence). This can be the basis for a prediction model. For example, we can guess the word that follows another, based on the freqency that they appear together. For now, we will simply define a nGrams and store them for future use.    
+
+### Unigram
+
+```{r}
+corpus <- readRDS(".\\data\\corpus.RData")
+corpus <- data.frame(corpus)
+set.seed(1244)
+train <- sample (corpus[,2], 50000)
+rm(corpus)
+unigram <- NGramTokenizer(train, Weka_control(min = 1, max = 1))
+unigram <- data.frame(table(unigram))
+unigram <- unigram[order(unigram$Freq,decreasing = TRUE),]
+names(unigram) <- c("word_1", "count")
+unigram$word_1 <- as.character(unigram$word_1)
+write.csv(unigram,"unigram.csv",row.names=F)
+unigram <- read.csv("unigram.csv",stringsAsFactors = F)
+saveRDS(unigram, file = "unigram.RData")
+rm(unigram)
+```
+
+```{r}
+unigram <- readRDS("unigram.RData")
+ggplot(data=unigram[1:20,], aes(x = reorder( word_1, count) , y = count)) +
+  theme_economist() +
+  geom_bar(stat="identity", fill = "darkblue") + 
+  scale_y_continuous(name = "Frequency", limits = c(0, 90000)) +
+  scale_x_discrete(name = "") +
+  ggtitle("Unigram frequency") +
+  coord_flip() +
+  geom_text(data = unigram[1:20,], aes(x = word_1, y = count, label = count), hjust=-.5, position = "identity", size = 3, color = "darkblue") 
+rm(unigram)
+```
+
+### Bigram
+
+```{r}
+bigram <- NGramTokenizer(train, Weka_control(min = 2, max = 2,delimiters = " \\r\\n\\t.,;:\"()?!"))
+bigram <- data.frame(table(bigram))
+bigram <- bigram[order(bigram$Freq,decreasing = TRUE),]
+names(bigram) <- c("words","count")
+bigram$words <- as.character(bigram$words)
+str2 <- strsplit(bigram$words,split=" ")
+bigram <- transform(bigram, 
+                    one = sapply(str2,"[[",1),   
+                    two = sapply(str2,"[[",2))
+bigram <- data.frame(word_1 = bigram$one,
+                     word_2 = bigram$two,
+                     count = bigram$count,stringsAsFactors=FALSE)
+write.csv(bigram,"bigram.csv",row.names=F)
+bigram <- read.csv("bigram.csv",stringsAsFactors = F)
+saveRDS(bigram,"bigram.RData")
+rm(str2); rm(bigram)
+```
+
+```{r}
+bigram <- readRDS("bigram.RData")
+bigram$words <- paste(bigram$word_1,bigram$word_2)
+ggplot(data=bigram[1:20,], aes(x = reorder( words, count), y = count)) +
+  theme_economist() +
+  geom_bar(stat="identity", fill = "darkblue") + 
+  scale_y_continuous(name = "Frequency", limits = c(0, 9000)) +
+  scale_x_discrete(name = "") +
+  ggtitle("Bigram frequency") +
+  coord_flip() +
+  geom_text(data = bigram [1:20,], aes(x = words, y = count, label = count), hjust=-.5, position = "identity", size = 3, color = "darkblue") 
+rm(bigram)
+```
+
+### Trigram
+
+```{r}
+trigram <- NGramTokenizer(train, Weka_control(min = 3, max = 3,delimiters = " \\r\\n\\t.,;:\"()?!"))
+trigram <- data.frame(table(trigram))
+trigram <- trigram[order(trigram$Freq,decreasing = TRUE),]
+names(trigram) <- c("words","count")
+trigram$words <- as.character(trigram$words)
+str3 <- strsplit(trigram$words,split=" ")
+trigram <- transform(trigram,
+                     one = sapply(str3,"[[",1),
+                     two = sapply(str3,"[[",2),
+                     three = sapply(str3,"[[",3))
+trigram <- data.frame(word_1 = trigram$one,
+                      word_2 = trigram$two, 
+                      word_3 = trigram$three, 
+                      count = trigram$count,stringsAsFactors=FALSE)
+write.csv(trigram,"trigram.csv",row.names=F)
+trigram <- read.csv("trigram.csv",stringsAsFactors = F)
+saveRDS(trigram,"trigram.RData")
+rm(trigram); rm(str3)
+```
+
+```{r}
+trigram <- readRDS("trigram.RData")
+trigram$words <- paste(trigram$word_1,trigram$word_2, trigram$word_3)
+ggplot(data=trigram[1:20,], aes(x = reorder( words, count) , y = count)) +
+  theme_economist() +
+  geom_bar(stat="identity", fill = "darkblue") + 
+  scale_y_continuous(name = "Frequency", limits = c(0, 800)) +
+  scale_x_discrete(name = "") +
+  ggtitle("Trigram frequency") +
+  coord_flip() +
+  geom_text(data = trigram [1:20,], aes(x = words, y = count, label = count), hjust=-.5, position = "identity", size = 3, color = "darkblue") 
+rm(trigram)
+```

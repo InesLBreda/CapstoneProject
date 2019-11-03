@@ -1,0 +1,174 @@
+---
+title: "Capstone Project - Part II"
+author: "Inês L Breda"
+date: "10/23/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, cache = TRUE)
+
+```
+
+# 1. LIBRARY
+
+```{r}
+if(!require(tm)) {
+  install.packages("tm")
+  library (tm)
+}
+if(!require(data.table)) {
+  install.packages("data.table")
+  library (data.table)
+}
+if(!require(RWeka)) {
+  install.packages("RWeka")
+  library (RWeka)
+}
+if(!require(qdap)) {
+  install.packages("qdap")
+  library (qdap)
+}
+if(!require(wordcloud)) {
+  install.packages("wordcloud")
+  library (wordcloud)
+}
+if(!require(RColorBrewer)) {
+  install.packages("RColorBrewer")
+  library (RColorBrewer)
+}
+
+if(!require(ggplot2)) {
+  install.packages("ggplot2")
+  library (ggplot2)
+}
+if(!require(ggthemes)) {
+  install.packages("ggthemes")
+  library (ggthemes)
+}
+if(!require(lemon)) {
+  install.packages("lemon")
+  library (lemon)
+}
+if(!require(dplyr)) {
+  install.packages("dplyr")
+  library (dplyr)
+}
+knit_print.data.frame <- lemon_print
+```
+
+
+# 2. Model
+
+Get n-grams from Part I:
+```{r}
+unigram_words <- data.table(readRDS("unigram.RData"))
+bigram_words <- data.table(readRDS("bigram.RData"))
+trigram_words <- data.table(readRDS("trigram.RData"))
+```
+
+```{r}
+cleanInput <-function(input) {
+input <- tolower(input)
+}
+dump("cleanInput", file = "cleanInput.R")
+```
+
+```{r}
+setkey(unigram_words, word_1)
+setkey(bigram_words, word_1, word_2)
+setkey(trigram_words, word_1, word_2, word_3)
+
+discount_value <- 0.75
+
+# Finding number of bi-gram words
+numOfBiGrams <- nrow(bigram_words[by = .(word_1, word_2)])
+ckn <- bigram_words[, .(Prob = ((.N) / numOfBiGrams)), by = word_2]
+setkey(ckn, word_2)
+
+# Assigning the probabilities as second word of bigram, to unigrams
+unigram_words[, Prob := ckn[word_1, Prob]]
+unigram_words <- unigram_words[!is.na(unigram_words$Prob)]
+
+# Finding number of times word 1 occurred as word 1 of bi-grams
+n1wi <- bigram_words[, .(N = .N), by = word_1]
+setkey(n1wi, word_1)
+
+# Assigning total times word 1 occured to bigram cn1
+bigram_words[, Cn1 := unigram_words[word_1, count]]
+
+# Kneser Kney Formula
+bigram_words[, Prob := ((count - discount_value) / Cn1 + discount_value / Cn1 * n1wi[word_1, N] * unigram_words[word_2, Prob])]
+
+#####FINDING TRIGRAM PROBABILITY
+
+# Finding count of word1-word2 combination in bigram 
+trigram_words[, Cn2 := rep(bigram_words[.(word_1, word_2), count], length.out = .N)]
+# Finding count of word1-word2 combination in trigram
+n1w12 <- trigram_words[, .N, by = .(word_1, word_2)]
+setkey(n1w12, word_1, word_2)
+
+# Kneser Kney Algorithm
+trigram_words[, Prob := (count - discount_value) / Cn2 + discount_value / Cn2 * n1w12[.(word_1, word_2), N] * bigram_words[.(word_1, word_2), Prob]]
+
+##FUNCTIONS
+uni_words <- unigram_words[order(-Prob)][1:47]
+
+saveRDS(uni_words,"uni_words.RData")
+saveRDS(bigram_words,"bi_words.RData")
+saveRDS(trigram_words,"tri_words.RData")
+
+bi_words <- bigram_words
+uni_words <- unigram_words
+tri_words <- trigram_words
+
+
+uniWords <- function(n = 5) {  
+    return(sample(uni_words[, word_1], size = n))
+}
+
+biWords <- function(w1, n = 5) {
+       pwords <- bi_words[w1][order(-Prob)]
+    if (any(is.na(pwords)))
+        return(uniWords(n))
+    if (nrow(pwords) > n)
+        return(pwords[1:n, word_2])
+    count <- nrow(pwords)
+    unWords <- uniWords(n)[1:(n - count)]
+    return(c(pwords[, word_2], unWords))
+}
+
+triWords <- function(w1, w2, n = 5) {
+        pwords <- tri_words[.(w1, w2)][order(-Prob)]
+    if (any(is.na(pwords)))
+        return(biWords(w2, n))
+    if (nrow(pwords) > n)
+        return(pwords[1:n, word_3])
+    count <- nrow(pwords)
+    bwords <- biWords(w2, n)[1:(n - count)]
+    return(c(pwords[, word_3], bwords))
+}
+
+nextWordPrediction <- function (wordCount,textInput) {
+  
+  textInput <- strsplit(textInput, "[[:space:]]|(?=[.!?])", perl=TRUE)
+  
+  if (wordCount == 1) {
+    biWords(w1 = textInput[[1]][1])
+  } else if (wordCount == 2) {
+    triWords(w1 = textInput[[1]][1], 
+             w2 = textInput[[1]][2])
+  } else if (wordCount >= 2) {
+    triWords(w1 = textInput[[1]][length(textInput[[1]])-1], 
+             w2 = textInput[[1]][length(textInput[[1]])])
+  }
+}
+
+dump("triWords", file="triWords.R")
+dump("biWords", file="biWords.R")
+dump("uniWords", file="uniWords.R")
+dump("nextWordPrediction", file="nextWordPrediction.R")
+
+```
